@@ -1366,6 +1366,9 @@ setDefault(CFG.AutoBuySeed, "List", {})
 setDefault(CFG.AutoBuySeed, "LoopGap", 3)
 -- InstantRestockBuy: watch StockValues.SeedShop.Items[*].Value -> restock là mua NGAY (không chờ vòng loop).
 setDefault(CFG, "InstantRestockBuy", true)
+-- CHAN DOI WORLD (map 2 -> map 1): xoa prompt "Travel to ..." cua part tag WorldTravelPortal
+-- (WorldTravelController.lua). false = cho phep cong doi world hoat dong nhu game goc.
+setDefault(CFG, "BlockWorldTravel", true)
 
 CFG.AutoPlant = CFG.AutoPlant or {}
 setDefault(CFG.AutoPlant, "Enabled", true)
@@ -7278,11 +7281,43 @@ end
 -- CHI ban prompt claim seed/hai (Claim/Collect/Harvest) -> dung muc dich.
 local function isDangerBlastPrompt(v)
     if CollectionService:HasTag(v, "GrowPrompt") then return true end
-    local npcs = workspace:FindFirstChild("NPCS")
-    if npcs and v:IsDescendantOf(npcs) then return true end
+    -- ===== FIX "dang farm map 2 thi bi keo ve map 1" (XAC NHAN SOURCE) =====
+    -- WorldTravelController.lua:18-46: MOI part co tag "WorldTravelPortal" duoc gan 1 ProximityPrompt
+    --   ActionText = "Travel to <DisplayName>"  ->  Triggered -> Networking.Worlds.RequestTravel:Fire(WorldId)
+    --   = DOI WORLD (map 2 "FallHarvest" -> map 1 "Main"/Garden Valley).
+    -- blastNearbyPrompts ban MOI prompt trong ban kinh (mac dinh 10 studs) luc claim seed; bo loc cu
+    -- KHONG co tu "travel" va portal KHONG nam trong workspace.NPCS -> LOT QUA -> bot tu bam cong
+    -- dich chuyen -> bi kick ve map 1. Chan 3 lop cho chac:
+    --   (1) tag WorldTravelPortal (nguon chuan cua controller)
+    --   (2) part cha co attribute "WorldId" (dieu kien bindPortal doc o dong 20)
+    --   (3) chu "travel"/"world"/"explore" trong ActionText/ObjectText (phong bien the khac)
+    if CollectionService:HasTag(v, "WorldTravelPortal") then return true end
+    local par = v.Parent
+    if par then
+        local okAttr, wid = pcall(function() return par:GetAttribute("WorldId") end)
+        if okAttr and type(wid) == "string" and wid ~= "" then return true end
+        if CollectionService:HasTag(par, "WorldTravelPortal") then return true end
+    end
+    -- Vung NPC cam ban: folder NPCS + cac quay NAM NGOAI folder do (verify LIVE map 2:
+    -- workspace.ExplorerStand / AuctionStand / PilgrimStand la Model o CAP workspace).
+    -- CACHE 10s: ham nay chay cho tung prompt TRONG TAM moi nhip blast (0.05s luc claim seed)
+    -- -> khong FindFirstChild lai 4 lan/prompt/nhip (MapCleanup co the xoa quay -> TTL lo cap nhat).
+    local zc = Runtime.BlastNoFireZones
+    if not zc or (os.clock() - zc.At) > 10 then
+        zc = { At = os.clock(), List = {} }
+        for _, zoneName in ipairs({ "NPCS", "ExplorerStand", "AuctionStand", "PilgrimStand" }) do
+            local zone = workspace:FindFirstChild(zoneName)
+            if zone then zc.List[#zc.List + 1] = zone end
+        end
+        Runtime.BlastNoFireZones = zc
+    end
+    for _, zone in ipairs(zc.List) do
+        if zone.Parent and v:IsDescendantOf(zone) then return true end
+    end
     local txt = string.lower(tostring(v.ActionText or "") .. " " .. tostring(v.ObjectText or ""))
     if txt:find("buy") or txt:find("purchase") or txt:find("gift") or txt:find("grow")
-        or txt:find("robux") or txt:find("upgrade") or txt:find("donate") then
+        or txt:find("robux") or txt:find("upgrade") or txt:find("donate")
+        or txt:find("travel") or txt:find("world") or txt:find("explore") then
         return true
     end
     return false
@@ -7319,6 +7354,58 @@ Runtime.SetupPromptRegistry = function()
     end
     Runtime.EndTurboFps()
     return set
+end
+
+-- ============================================================
+-- CHAN CONG DICH CHUYEN WORLD (fix "farm map 2 ma bi keo ve map 1 hoai") - XAC NHAN SOURCE:
+--   WorldTravelController.lua:18-46 -> part co tag "WorldTravelPortal" (hoac attribute "WorldId")
+--   duoc gan ProximityPrompt "Travel to <ten world>"; Triggered -> Worlds.RequestTravel:Fire(WorldId)
+--   -> SERVER DOI WORLD. Bot KHONG BAO GIO can doi world -> DESTROY han prompt do.
+-- Vi sao phai destroy chu khong chi loc blast: fireproximityprompt cua executor BO QUA ca .Enabled
+-- lan khoang cach, nen chi cai bo loc van con cua so dinh (vd them duong ban prompt moi sau nay).
+-- Prompt destroy -> blastNearbyPrompts cung bo qua (no check :IsDescendantOf(workspace)).
+-- Controller game chiu duoc: no chi Connect Triggered, prompt mat thi connection chet theo (vo hai).
+-- Tat tinh nang (muon tu bam cong doi world bang tay): CFG.BlockWorldTravel = false.
+-- ============================================================
+Runtime.KillWorldTravelPrompts = function(part)
+    if CFG.BlockWorldTravel == false then return 0 end
+    if not (part and part.Parent) then return 0 end
+    local n = 0
+    local ok, kids = pcall(part.GetChildren, part)
+    if ok and type(kids) == "table" then
+        for _, child in ipairs(kids) do
+            if child:IsA("ProximityPrompt") then
+                if pcall(function() child:Destroy() end) then n = n + 1 end
+            end
+        end
+    end
+    return n
+end
+Runtime.SetupWorldTravelGuard = function()
+    if CFG.BlockWorldTravel == false or Runtime.WorldTravelGuardReady then return end
+    Runtime.WorldTravelGuardReady = true
+    local killed = 0
+    for _, part in ipairs(CollectionService:GetTagged("WorldTravelPortal")) do
+        killed = killed + Runtime.KillWorldTravelPrompts(part)
+    end
+    -- portal stream ve sau / game gan prompt sau tag -> nghe tiep de xoa (dung nguon controller nghe).
+    local addConn = CollectionService:GetInstanceAddedSignal("WorldTravelPortal"):Connect(function(part)
+        task.defer(function()
+            -- doi 1 nhip cho WorldTravelController kip tao prompt roi moi xoa
+            if waitAlive(0.6) then Runtime.KillWorldTravelPrompts(part) end
+        end)
+    end)
+    table.insert(Runtime.Cleanups, function() pcall(addConn.Disconnect, addConn) end)
+    -- quet lai dinh ky vai lan dau (portal co the duoc gan prompt tre hon tag)
+    task.spawn(function()
+        for _ = 1, 6 do
+            if not waitAlive(5) then return end
+            for _, part in ipairs(CollectionService:GetTagged("WorldTravelPortal")) do
+                Runtime.KillWorldTravelPrompts(part)
+            end
+        end
+    end)
+    actionLog("WorldTravel", "BLOCKED", ("xoa %d prompt cong doi world (chong bi keo ve map khac)"):format(killed))
 end
 
 local function blastNearbyPrompts(centerPos, radius)
@@ -7897,37 +7984,99 @@ Runtime.CollectHeldCropsSummary = function()
     return out
 end
 
--- Cap nhat ScrollingFrame list fruit dang giu (tai dung label trong Runtime.HeldPanel.Pool, an phan du).
--- Goi tu vong refresh GUI (thay cho setText(vEvent...)). GUI build luu Runtime.HeldPanel = {Scroll,Title,Pool}.
+-- Cap nhat list fruit dang giu. BAN CU: moi loai = 1 dong chu tran ngang ("Ten x120 [Gold x3]") ->
+-- ten dai bi cat, so luong lan voi mutation, nhin roi. BAN MOI (chong yeu cau lam lai): moi loai = 1
+-- CARD gom vach mau ben trai + TEN dam + badge SO LUONG ben phai + dong MUTATION nho ben duoi.
+-- Van TAI DUNG object trong Runtime.HeldPanel.Pool (an phan du, khong destroy) -> khong churn RAM.
+-- GUI build luu Runtime.HeldPanel = { Scroll, Title, Empty, Pool, Accent, Text }.
 Runtime.UpdateHeldFruitPanel = function()
     local hp = Runtime.HeldPanel
     if type(hp) ~= "table" or not (hp.Scroll and hp.Scroll.Parent) then return end
     local data = Runtime.CollectHeldCropsSummary()
     local pool = hp.Pool
     if type(pool) ~= "table" then pool = {}; hp.Pool = pool end
+    local accent = hp.Accent or Color3.fromRGB(94, 234, 212)
     for i, e in ipairs(data) do
-        local lbl = pool[i]
-        if not lbl then
-            lbl = Instance.new("TextLabel")
-            lbl.BackgroundTransparency = 1
-            lbl.Size = UDim2.new(1, 0, 0, 18)
-            lbl.Font = Enum.Font.GothamMedium
-            lbl.TextSize = 14
-            lbl.TextXAlignment = Enum.TextXAlignment.Left
-            lbl.TextColor3 = Color3.fromRGB(222, 226, 238)
-            lbl.TextTruncate = Enum.TextTruncate.AtEnd
-            lbl.LayoutOrder = i
-            lbl.Parent = hp.Scroll
-            pool[i] = lbl
+        local card = pool[i]
+        if not card then
+            local f = Instance.new("Frame")
+            f.BackgroundColor3 = Color3.fromRGB(26, 31, 43)
+            f.BackgroundTransparency = 0.1
+            f.BorderSizePixel = 0
+            f.Size = UDim2.new(1, 0, 0, 40)
+            f.Parent = hp.Scroll
+            Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
+            local pd = Instance.new("UIPadding", f)
+            pd.PaddingLeft = UDim.new(0, 12); pd.PaddingRight = UDim.new(0, 10)
+            pd.PaddingTop = UDim.new(0, 4); pd.PaddingBottom = UDim.new(0, 4)
+
+            -- vach mau ben trai -> phan biet tung card khi cuon nhanh
+            local bar = Instance.new("Frame")
+            bar.AnchorPoint = Vector2.new(0, 0.5)
+            bar.Position = UDim2.new(0, -8, 0.5, 0)
+            bar.Size = UDim2.new(0, 3, 0.7, 0)
+            bar.BackgroundColor3 = accent
+            bar.BorderSizePixel = 0
+            bar.Parent = f
+            Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
+
+            local nameL = Instance.new("TextLabel")
+            nameL.BackgroundTransparency = 1
+            nameL.Size = UDim2.new(0.68, 0, 0.55, 0)
+            nameL.Font = Enum.Font.GothamBold
+            nameL.TextSize = 14
+            nameL.TextColor3 = hp.Text or Color3.fromRGB(236, 241, 248)
+            nameL.TextXAlignment = Enum.TextXAlignment.Left
+            nameL.TextTruncate = Enum.TextTruncate.AtEnd
+            nameL.Text = ""
+            nameL.Parent = f
+
+            local cntL = Instance.new("TextLabel")
+            cntL.AnchorPoint = Vector2.new(1, 0)
+            cntL.Position = UDim2.new(1, 0, 0, 0)
+            cntL.BackgroundTransparency = 1
+            cntL.Size = UDim2.new(0.32, 0, 0.55, 0)
+            cntL.Font = Enum.Font.GothamBold
+            cntL.TextSize = 14
+            cntL.TextColor3 = accent
+            cntL.TextXAlignment = Enum.TextXAlignment.Right
+            cntL.Text = ""
+            cntL.Parent = f
+
+            local mutL = Instance.new("TextLabel")
+            mutL.Position = UDim2.new(0, 0, 0.55, 0)
+            mutL.BackgroundTransparency = 1
+            mutL.Size = UDim2.new(1, 0, 0.45, 0)
+            mutL.Font = Enum.Font.GothamMedium
+            mutL.TextSize = 12
+            mutL.TextColor3 = Color3.fromRGB(150, 162, 186)
+            mutL.TextXAlignment = Enum.TextXAlignment.Left
+            mutL.TextTruncate = Enum.TextTruncate.AtEnd
+            mutL.Text = ""
+            mutL.Parent = f
+
+            card = { Frame = f, Name = nameL, Count = cntL, Mut = mutL }
+            pool[i] = card
         end
-        lbl.Visible = true
-        lbl.Text = ("\u{1F34F} %s  x%d   [%s]"):format(tostring(e.Name), tonumber(e.Total) or 0, tostring(e.MutStr))
+        card.Frame.Visible = true
+        card.Frame.LayoutOrder = i
+        -- chi ghi khi DOI -> khong re-layout GUI moi nhip refresh
+        local nm = tostring(e.Name)
+        if card.Name.Text ~= nm then card.Name.Text = nm end
+        local cnt = "x" .. tostring(tonumber(e.Total) or 0)
+        if card.Count.Text ~= cnt then card.Count.Text = cnt end
+        local mut = tostring(e.MutStr)
+        if card.Mut.Text ~= mut then card.Mut.Text = mut end
     end
     for i = #data + 1, #pool do
-        if pool[i] then pool[i].Visible = false end
+        local card = pool[i]
+        if card and card.Frame then card.Frame.Visible = false end
     end
+    -- khong giu cay nao -> hien dong giai thich thay vi khung trang (nhin nhu loi)
+    if hp.Empty then hp.Empty.Visible = (#data == 0) end
     if hp.Title then
-        hp.Title.Text = ("\u{1F9EC} Fruit dang giu (cho x4): %d loai"):format(#data)
+        local t = tostring(#data) .. " loai"
+        if hp.Title.Text ~= t then hp.Title.Text = t end
     end
 end
 
@@ -15177,83 +15326,207 @@ Runtime.SetupCommercialGui = function()
     pl.Padding = UDim.new(0.005, 0)
     pl.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
+    -- ============================================================
+    -- LAYOUT (thiet ke lai theo yeu cau chong: "xep hang doc khong du hang" + "cho xem list cay giu xau"):
+    --   * BAN CU: 14 TextLabel cung xep 1 COT doc -> moi dong chi cao ~5.8% panel, TextScaled thu chu
+    --     be xiu, doc khong ra; them dong nao la moi dong lai teo them.
+    --   * BAN MOI: so lieu tach ra LUOI 2 COT x 4 HANG (8 o) -> moi o duoc gap doi be ngang + co
+    --     CAPTION nho o tren, SO TO o duoi -> liec la thay. Header / ID / Task / Footer gom thanh
+    --     DAI NGANG (trai-phai) -> tiet kiem chieu cao, don cho luoi + list.
+    --   * LIST "fruit dang giu": doi tu dong-chu-tran sang CARD (vach mau + ten dam + badge so luong
+    --     ben phai + dong mutation nho ben duoi) + co dong "trong rong" khi khong giu cay nao.
+    -- Van dung % panel nen FILL dep o moi co cua so; cho nao can chu on dinh thi dung TextSize pixel.
+    -- ============================================================
     local ord = 0
-    -- moi row cao theo % PANEL + TextScaled -> chu tu to/nho theo cua so, FILL dep o moi co.
-    local function row(h, color)
-        ord = ord + 1
+    local function nextOrd() ord = ord + 1 return ord end
+
+    -- DAI NGANG: 1 Frame trong suot, con dat theo AnchorPoint trai/phai (khong dung UIListLayout con).
+    local function strip(h)
+        local f = Instance.new("Frame")
+        f.LayoutOrder = nextOrd()
+        f.BackgroundTransparency = 1
+        f.Size = UDim2.new(1, 0, h, 0)
+        f.Parent = panel
+        return f
+    end
+    local function stripText(parent, alignRight, color, font, widthScale)
         local l = Instance.new("TextLabel")
-        l.LayoutOrder = ord
         l.BackgroundTransparency = 1
-        l.Size = UDim2.new(1, 0, h or 0.058, 0)
-        l.Font = Enum.Font.GothamSemibold
+        l.AnchorPoint = Vector2.new(alignRight and 1 or 0, 0.5)
+        l.Position = UDim2.new(alignRight and 1 or 0, 0, 0.5, 0)
+        l.Size = UDim2.new(widthScale or 0.5, 0, 0.92, 0)
+        l.Font = font or Enum.Font.GothamSemibold
         l.TextScaled = true
         l.TextColor3 = color or TEXT
-        l.TextXAlignment = Enum.TextXAlignment.Center
+        l.TextXAlignment = alignRight and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
+        l.TextTruncate = Enum.TextTruncate.AtEnd
         l.Text = ""
-        l.Parent = panel
-        local c = Instance.new("UITextSizeConstraint", l); c.MaxTextSize = 40; c.MinTextSize = 6
+        l.Parent = parent
+        local c = Instance.new("UITextSizeConstraint", l); c.MaxTextSize = 26; c.MinTextSize = 6
         return l
     end
     local function divider()
-        ord = ord + 1
         local d = Instance.new("Frame")
-        d.LayoutOrder = ord
-        d.Size = UDim2.new(0.96, 0, 0.004, 0)
+        d.LayoutOrder = nextOrd()
+        d.Size = UDim2.new(1, 0, 0.004, 0)
         d.BackgroundColor3 = LINE
         d.BorderSizePixel = 0
         d.Parent = panel
     end
 
-    -- Banner discord + hub = 2 row dau (to hon)
-    local discord = row(0.075, ACCENT); discord.Font = Enum.Font.GothamBold;   discord.Text = "\u{1F517} " .. DISCORD
-    local hub     = row(0.05, ACCENT2); hub.Font     = Enum.Font.GothamMedium; hub.Text     = "\u{2B50} " .. HUBNAME
+    -- HEADER: ten hub (trai) + link discord (phai)
+    do
+        local head = strip(0.085)
+        local hubL = stripText(head, false, ACCENT2, Enum.Font.GothamBold, 0.45)
+        hubL.Text = "\u{2B50} " .. HUBNAME
+        local dcL = stripText(head, true, ACCENT, Enum.Font.GothamBold, 0.55)
+        dcL.Text = "\u{1F517} " .. DISCORD
+    end
     divider()
-    local vUser  = row(0.07)
-    local vTask  = row(0.058, ACCENT)
+
+    -- ID BAR: username (trai) + thoi gian da chay (phai)
+    local vUser, vTime
+    do
+        local idbar = strip(0.062)
+        vUser = stripText(idbar, false, TEXT, Enum.Font.GothamBold, 0.62)
+        vTime = stripText(idbar, true, ACCENT2, Enum.Font.GothamSemibold, 0.38)
+    end
+    -- TASK: chuoi trang thai DAI -> cho full be ngang, tran thi cat duoi (khong bop chu ca panel)
+    local vTask
+    do
+        local tb = strip(0.05)
+        vTask = stripText(tb, false, ACCENT, Enum.Font.GothamMedium, 1)
+    end
     divider()
-    local vMoney = row()
-    local vEarn  = row()
-    local vPlant = row()
-    local vFruit = row()
-    local vHarv  = row()
-    local vPets  = row()
-    local vExp   = row()
-    -- HELD FRUIT PANEL (chong dot 20): THAY dong "Events / du doan thoi tiet" bang LIST fruit dang GIU
-    -- (KeepCropsForSell / SellAllForMultipliers cho x4) + mutation moi loai; SCROLL len/xuong khong tran GUI.
-    local vHeldTitle = row(0.045, GOLD); vHeldTitle.Font = Enum.Font.GothamBold
-    vHeldTitle.Text = "\u{1F9EC} Fruit dang giu (cho x4):"
-    ord = ord + 1
+
+    -- ===== LUOI SO LIEU: 2 COT x 4 HANG = 8 O =====
+    local grid = Instance.new("Frame")
+    grid.LayoutOrder = nextOrd()
+    grid.BackgroundTransparency = 1
+    grid.Size = UDim2.new(1, 0, 0.31, 0)
+    grid.Parent = panel
+    do
+        local gl = Instance.new("UIGridLayout", grid)
+        gl.CellSize = UDim2.new(0.5, -5, 0.25, -5)
+        gl.CellPadding = UDim2.new(0, 10, 0, 6)
+        gl.SortOrder = Enum.SortOrder.LayoutOrder
+        gl.FillDirectionMaxCells = 2
+    end
+    local tileOrd = 0
+    -- 1 o = khung bo goc: CAPTION mo nhat o tren + GIA TRI dam o duoi.
+    local function tile(caption, valueColor)
+        tileOrd = tileOrd + 1
+        local f = Instance.new("Frame")
+        f.LayoutOrder = tileOrd
+        f.BackgroundColor3 = Color3.fromRGB(28, 33, 46)
+        f.BackgroundTransparency = 0.15
+        f.BorderSizePixel = 0
+        f.Parent = grid
+        Instance.new("UICorner", f).CornerRadius = UDim.new(0, 10)
+        local st = Instance.new("UIStroke", f); st.Color = LINE; st.Transparency = 0.35; st.Thickness = 1
+        local pd = Instance.new("UIPadding", f)
+        pd.PaddingLeft = UDim.new(0, 9); pd.PaddingRight = UDim.new(0, 9)
+        pd.PaddingTop = UDim.new(0, 4); pd.PaddingBottom = UDim.new(0, 4)
+
+        local cap = Instance.new("TextLabel")
+        cap.BackgroundTransparency = 1
+        cap.Size = UDim2.new(1, 0, 0.4, 0)
+        cap.Font = Enum.Font.GothamMedium
+        cap.TextScaled = true
+        cap.TextColor3 = Color3.fromRGB(148, 160, 184)
+        cap.TextXAlignment = Enum.TextXAlignment.Left
+        cap.TextTruncate = Enum.TextTruncate.AtEnd
+        cap.Text = caption
+        cap.Parent = f
+        local cc = Instance.new("UITextSizeConstraint", cap); cc.MaxTextSize = 15; cc.MinTextSize = 6
+
+        local val = Instance.new("TextLabel")
+        val.BackgroundTransparency = 1
+        val.Position = UDim2.new(0, 0, 0.4, 0)
+        val.Size = UDim2.new(1, 0, 0.6, 0)
+        val.Font = Enum.Font.GothamBold
+        val.TextScaled = true
+        val.TextColor3 = valueColor or TEXT
+        val.TextXAlignment = Enum.TextXAlignment.Left
+        val.TextTruncate = Enum.TextTruncate.AtEnd
+        val.Text = "-"
+        val.Parent = f
+        local vc = Instance.new("UITextSizeConstraint", val); vc.MaxTextSize = 24; vc.MinTextSize = 7
+        return val
+    end
+
+    local vMoney = tile("\u{1F4B0} " .. Runtime.CurrencyStatName(), GOLD)
+    local vEarn  = tile("\u{1F4B5} Earned", ACCENT)
+    local vPlant = tile("\u{1F331} Planted")
+    local vFruit = tile("\u{1F34E} Fruits (tui)")
+    local vHarv  = tile("\u{1F34F} Ripe")
+    local vPets  = tile("\u{1F43E} Pets")
+    local vExp   = tile("\u{1F3E1} Expansions")
+    local vFps   = tile("\u{1F4C8} FPS", ACCENT2)
+
+    -- ===== LIST FRUIT DANG GIU (KeepCropsForSell / SellAllForMultipliers cho x4) =====
+    -- Header co badge dem so loai; khung duoi scroll duoc, moi loai 1 CARD.
+    local vHeldTitle
+    do
+        local hh = strip(0.05)
+        local ht = stripText(hh, false, GOLD, Enum.Font.GothamBold, 0.72)
+        ht.Text = "\u{1F9EC} Fruit dang giu (cho x4)"
+        vHeldTitle = stripText(hh, true, ACCENT, Enum.Font.GothamBold, 0.28)
+        vHeldTitle.Text = "0 loai"
+    end
     local heldScroll = Instance.new("ScrollingFrame")
-    heldScroll.LayoutOrder = ord
-    -- Cao co dinh -> LIST tran thi SCROLL trong khung nay (khong day cac dong duoi ra ngoai panel).
-    -- Chinh cao/thap = doi 0.13 (0-1 theo panel). ScrollBar keo len/xuong xem het loai dang giu.
-    heldScroll.Size = UDim2.new(0.98, 0, 0.13, 0)
-    heldScroll.BackgroundColor3 = Color3.fromRGB(14, 16, 24)
-    heldScroll.BackgroundTransparency = 0.25
+    heldScroll.LayoutOrder = nextOrd()
+    -- Cao co dinh -> nhieu loai thi SCROLL trong khung, KHONG day cac dong duoi ra ngoai panel.
+    heldScroll.Size = UDim2.new(1, 0, 0.2, 0)
+    heldScroll.BackgroundColor3 = Color3.fromRGB(15, 18, 27)
+    heldScroll.BackgroundTransparency = 0.15
     heldScroll.BorderSizePixel = 0
-    heldScroll.ScrollBarThickness = 5
+    heldScroll.ScrollBarThickness = 4
     heldScroll.ScrollBarImageColor3 = ACCENT
     heldScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
     heldScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
     heldScroll.ScrollingDirection = Enum.ScrollingDirection.Y
     heldScroll.Active = true
     heldScroll.Parent = panel
-    Instance.new("UICorner", heldScroll).CornerRadius = UDim.new(0, 8)
+    Instance.new("UICorner", heldScroll).CornerRadius = UDim.new(0, 10)
     do
+        local hst = Instance.new("UIStroke", heldScroll); hst.Color = LINE; hst.Transparency = 0.5; hst.Thickness = 1
         local hsl = Instance.new("UIListLayout", heldScroll)
         hsl.SortOrder = Enum.SortOrder.LayoutOrder
-        hsl.Padding = UDim.new(0, 2)
+        hsl.Padding = UDim.new(0, 4)
         local hsp = Instance.new("UIPadding", heldScroll)
-        hsp.PaddingLeft = UDim.new(0, 8); hsp.PaddingRight = UDim.new(0, 8)
-        hsp.PaddingTop = UDim.new(0, 3); hsp.PaddingBottom = UDim.new(0, 3)
+        hsp.PaddingLeft = UDim.new(0, 10); hsp.PaddingRight = UDim.new(0, 10)
+        hsp.PaddingTop = UDim.new(0, 5); hsp.PaddingBottom = UDim.new(0, 5)
     end
-    Runtime.HeldPanel = { Scroll = heldScroll, Title = vHeldTitle, Pool = {} }
+    -- Trang thai RONG: khong giu cay nao -> hien 1 dong giai thich, khong de khung trang (nhin nhu loi).
+    local heldEmpty = Instance.new("TextLabel")
+    heldEmpty.LayoutOrder = 999999
+    heldEmpty.BackgroundTransparency = 1
+    heldEmpty.Size = UDim2.new(1, 0, 0, 26)
+    heldEmpty.Font = Enum.Font.GothamMedium
+    heldEmpty.TextSize = 13
+    heldEmpty.TextColor3 = Color3.fromRGB(120, 132, 156)
+    heldEmpty.TextXAlignment = Enum.TextXAlignment.Left
+    heldEmpty.TextTruncate = Enum.TextTruncate.AtEnd
+    heldEmpty.Text = "chua giu cay nao (chua khai KeepCropsForSell / chua toi x4)"
+    heldEmpty.Parent = heldScroll
+    Runtime.HeldPanel = {
+        Scroll = heldScroll, Title = vHeldTitle, Empty = heldEmpty, Pool = {},
+        Accent = ACCENT, Line = LINE, Text = TEXT,
+    }
     divider()
-    local vEquip = row()
-    local vFps   = row(0.058, GOLD)
-    -- Dòng status KillGameControllers (đợt 9): CHỈ tạo khi bật flag -> tab không bật GUI y như cũ.
-    local vKill  = (CFG.KillGameControllers and CFG.KillGameControllers.Enabled) and row(0.055, ACCENT) or nil
-    local vTime  = row(0.058, ACCENT2)
+
+    -- FOOTER: pet dang deo (+ dong KillCtrl neu bat flag)
+    local vEquip, vKill
+    do
+        local fbar = strip(0.05)
+        vEquip = stripText(fbar, false, TEXT, Enum.Font.GothamSemibold, 1)
+        -- Dòng status KillGameControllers (đợt 9): CHỈ tạo khi bật flag -> tab không bật GUI y như cũ.
+        if CFG.KillGameControllers and CFG.KillGameControllers.Enabled then
+            local kbar = strip(0.045)
+            vKill = stripText(kbar, false, ACCENT, Enum.Font.GothamMedium, 1)
+        end
+    end
 
     local showBtn = Instance.new("TextButton")
     showBtn.AnchorPoint = Vector2.new(1, 0)
@@ -15371,11 +15644,9 @@ Runtime.SetupCommercialGui = function()
             if State.FpsCapStatus then
                 fpsTxt = fpsTxt .. "  [" .. tostring(State.FpsCapStatus) .. "]"
             end
-            -- RAM LUA (dot 3 - MemWatch do): heap Lua cua SCRIPT. So nay THAP ma RAM process van cao
-            -- -> RAM no phia ENGINE (instance/texture) -> bat "Nuke All" / HideTreeKeepFruit.DestroyFruitToo.
-            if State.LuaHeapMB then
-                fpsTxt = fpsTxt .. ("  Lua %dMB"):format(math.floor(State.LuaHeapMB + 0.5))
-            end
+            -- (RAM LUA da chuyen xuong dong FOOTER canh "Equipped" -> o luoi FPS khong bi tran chu.
+            --  Y nghia van the: so nay THAP ma RAM process van cao -> no phia ENGINE (instance/texture)
+            --  -> bat "Nuke All" / HideTreeKeepFruit.DestroyFruitToo.)
 
             -- THONG KE TIEN KIEM/GIO (yeu cau cua chong): cong don cac lan tien TANG (ban qua...)
             -- vao Earned - bo qua luc TIEU tien (mua pet/seed) de khong bi am. Trung binh = Earned/gio chay.
@@ -15401,33 +15672,40 @@ Runtime.SetupCommercialGui = function()
                 if el >= 120 then earnTxt = earnTxt .. "  (" .. fmtMoney(ms.Earned / (el / 3600)) .. "/h)" end
             end
 
-            setText(vUser,  "\u{1F464} Username: " .. tostring(userStr or "-"))
-            setText(vTask,  "\u{1F4CB} " .. tostring(State.LastAction or "-"))
-            setText(vMoney, "\u{1F4B0} " .. Runtime.CurrencyStatName() .. ": " .. fmtMoney(money))
-            setText(vEarn,  "\u{1F4B5} Earned: " .. earnTxt)
-            setText(vPlant, "\u{1F331} Planted: " .. plantStr)
-            setText(vFruit, "\u{1F34E} Fruits: " .. (fruitCount and (tostring(fruitCount) .. " / " .. tostring(fruitMax)) or "-"))
             -- Ripe = qua CHIN cho hai / TONG qua ngoai vuon (data); +N cay = cay 1-lan da lon cho hai;
             -- (N ket) = muc tieu ban >=2 lan van con (favorite/server tu choi) -> ly do Ripe khong ve 0.
             local hs = State.HarvestStat
             local harvTxt = "-"
             if hs then
-                harvTxt = tostring(hs.Ripe or 0) .. " chin / " .. tostring(hs.Total or 0) .. " qua"
-                if (hs.Single or 0) > 0 then harvTxt = harvTxt .. " +" .. tostring(hs.Single) .. " cay" end
+                harvTxt = tostring(hs.Ripe or 0) .. "/" .. tostring(hs.Total or 0)
+                if (hs.Single or 0) > 0 then harvTxt = harvTxt .. " +" .. tostring(hs.Single) .. "cay" end
                 if (hs.Held or 0) > 0 then harvTxt = harvTxt .. " [giu " .. tostring(hs.Held) .. "]" end
-                if (hs.Stuck or 0) > 0 then harvTxt = harvTxt .. " (" .. tostring(hs.Stuck) .. " ket)" end
+                if (hs.Stuck or 0) > 0 then harvTxt = harvTxt .. " (" .. tostring(hs.Stuck) .. "ket)" end
             end
-            setText(vHarv,  "\u{1F34F} Ripe: " .. harvTxt)
-            setText(vPets,  "\u{1F43E} Active Pets: " .. petTxt)
-            setText(vExp,   "\u{1F3E1} Plot Expansions: " .. expTxt)
-            -- (thay dong "Events / du doan thoi tiet" bang LIST fruit dang giu - scroll duoc)
+            -- DAI NGANG: co nhan chu o day (chuoi dai -> cho full be ngang, tran thi cat duoi).
+            setText(vUser,  "\u{1F464} " .. tostring(userStr or "-"))
+            setText(vTime,  "\u{23F0} " .. rtStr)
+            setText(vTask,  "\u{1F4CB} " .. tostring(State.LastAction or "-"))
+            -- 8 O LUOI: caption da co san luc dung GUI -> o day CHI set GIA TRI (so to, de doc).
+            setText(vMoney, fmtMoney(money))
+            setText(vEarn,  earnTxt)
+            setText(vPlant, plantStr)
+            setText(vFruit, fruitCount and (tostring(fruitCount) .. " / " .. tostring(fruitMax)) or "-")
+            setText(vHarv,  harvTxt)
+            setText(vPets,  petTxt)
+            setText(vExp,   expTxt)
+            setText(vFps,   fpsTxt)
+            -- LIST fruit dang giu (card + badge dem so loai)
             if type(Runtime.UpdateHeldFruitPanel) == "function" then pcall(Runtime.UpdateHeldFruitPanel) end
-            setText(vEquip, "\u{1F415} Equipped: " .. equipTxt)
-            setText(vFps,   "\u{1F4C8} FPS: " .. fpsTxt)
+            -- FOOTER: pet dang deo + heap Lua (day tu o FPS xuong day cho o luoi khoi tran chu)
+            local eqLine = "\u{1F415} Equipped: " .. equipTxt
+            if State.LuaHeapMB then
+                eqLine = eqLine .. ("   \u{1F9E0} Lua %dMB"):format(math.floor(State.LuaHeapMB + 0.5))
+            end
+            setText(vEquip, eqLine)
             if vKill then
                 setText(vKill, "\u{2694} KillCtrl: " .. tostring(State.KillCtrlStatus or "dang cho load..."))
             end
-            setText(vTime,  "\u{23F0} Time: " .. rtStr)
 
             -- Nhịp GUI theo Dashboard.RefreshRate (trước hardcode 1s, key bị chết): sàn 1s giữ
             -- hành vi cũ (default 0.5 không làm GUI chạy DÀY hơn); LowFps -> nhân đôi như cũ.
@@ -15527,6 +15805,8 @@ Runtime.BootStartup = function()
     -- PromptRegistry boot SOM (sau khi map cleanup xong -> workspace da gon): seed set prompt 1 lan
     -- de luc event claim seed KHONG phai quet GetDescendants -> het dung hinh luc event.
     Runtime.SafeBoot("PromptRegistry", Runtime.SetupPromptRegistry)
+    -- Chan cong doi world NGAY sau khi co registry: bot farm map 2 khong duoc phep bi keo ve map 1.
+    Runtime.SafeBoot("WorldTravelGuard", Runtime.SetupWorldTravelGuard)
     Runtime.SafeBoot("InventoryWatcher", setupInventoryWatcher)
     Runtime.SafeBoot("AntiPush", Runtime.SetupAntiPush)
     Runtime.SafeBoot("CharacterStrip", Runtime.SetupCharacterStrip)   -- dot 4: lot phu kien nguoi khac -> ha RAM
