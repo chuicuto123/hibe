@@ -10588,14 +10588,17 @@ local function buildPetEquipCandidates()
     local mailNames = {}
     if mailActive then
         for _, w in ipairs(type(mail.PetNames) == "table" and mail.PetNames or {}) do
-            if type(w) == "string" and w ~= "" then mailNames[string.lower(w)] = true end
+            -- normPetKey (khong phai string.lower): ten pet co the viet "Shadow Dragon" hay
+            -- "ShadowDragon" - game dung KEY khong dau cach (PetData.lua:494 u10.ShadowDragon),
+            -- DisplayName moi co dau cach (dong 482). Chuan hoa het -> viet kieu nao cung khop.
+            if type(w) == "string" and w ~= "" then mailNames[normPetKey(w)] = true end
         end
     end
 
     for _, e in ipairs(entries) do
         if not e.Equipped then
             local allowed = rarityAllowed(e.Rarity, minRarity)
-            if allowed and mailActive and type(e.Name) == "string" and mailNames[string.lower(e.Name)] then
+            if allowed and mailActive and type(e.Name) == "string" and mailNames[normPetKey(e.Name)] then
                 allowed = false -- để dành gửi mail
             end
             if allowed then
@@ -10660,7 +10663,7 @@ Runtime.BuildPriorityEquipPlan = function(c, maxEquipped)
                 count = tonumber(spec); prio = 999
             end
             if count and count > 0 then
-                table.insert(list, { Name = name, Key = string.lower(name), Count = count, Priority = prio or 999 })
+                table.insert(list, { Name = name, Key = normPetKey(name), Count = count, Priority = prio or 999 })
             end
         end
     end
@@ -10671,10 +10674,10 @@ Runtime.BuildPriorityEquipPlan = function(c, maxEquipped)
     -- TỔNG sở hữu mỗi tên = đang equip + chưa equip (chỉ rót slot cho pet THỰC SỰ có).
     local ownedByKey = {}
     for nm, cnt in pairs(select(1, getEquippedPetCounts())) do
-        local k = string.lower(tostring(nm)); ownedByKey[k] = (ownedByKey[k] or 0) + (tonumber(cnt) or 0)
+        local k = normPetKey(nm); ownedByKey[k] = (ownedByKey[k] or 0) + (tonumber(cnt) or 0)
     end
     for nm, cnt in pairs(getUnequippedPetCounts()) do
-        local k = string.lower(tostring(nm)); ownedByKey[k] = (ownedByKey[k] or 0) + (tonumber(cnt) or 0)
+        local k = normPetKey(nm); ownedByKey[k] = (ownedByKey[k] or 0) + (tonumber(cnt) or 0)
     end
     local remaining = math.max(tonumber(maxEquipped) or 0, 0)
     for _, e in ipairs(list) do
@@ -10710,7 +10713,7 @@ function Runtime.doAutoEquipPet()
     elseif listMode then
         for _, n in ipairs(c.List) do
             if type(n) == "string" and n ~= "" then
-                local k = string.lower(n)
+                local k = normPetKey(n)
                 want[k] = (want[k] or 0) + 1
             end
         end
@@ -10730,7 +10733,7 @@ function Runtime.doAutoEquipPet()
     local eventPet = c.EventPet
     if type(eventPet) == "string" and eventPet ~= "" and Runtime.IsMutationWeatherActive() then
         local slots = (maxEquipped and maxEquipped > 0) and maxEquipped or 1
-        local ek = string.lower(eventPet)
+        local ek = normPetKey(eventPet)
         want = { [ek] = slots }
         priorityMode = true
         priorityOrder = { ek }
@@ -10750,7 +10753,7 @@ function Runtime.doAutoEquipPet()
     if listMode and packet({ "Pets", "RequestUnequip" }) then
         local kept = {}
         for _, e in ipairs(getEquippedPetList()) do
-            local k = string.lower(tostring(e.Name))
+            local k = normPetKey(e.Name)
             if (kept[k] or 0) < (want[k] or 0) then
                 kept[k] = (kept[k] or 0) + 1   -- đúng pet & còn trong hạn -> GIỮ
             elseif type(e.Id) == "string" and e.Id ~= "" then
@@ -10770,7 +10773,7 @@ function Runtime.doAutoEquipPet()
     Runtime.EqPetCache = nil   -- vua co the unequip o buoc 1 -> doc TUOI, khong dung cache
     local eqCounts, equippedTotal = getEquippedPetCounts()
     local haveEq = {}
-    for name, cnt in pairs(eqCounts) do haveEq[string.lower(tostring(name))] = (tonumber(cnt) or 0) end
+    for name, cnt in pairs(eqCounts) do haveEq[normPetKey(name)] = (tonumber(cnt) or 0) end
     if maxEquipped - equippedTotal <= 0 then
         State.LastPet = os.date("%H:%M:%S") .. " slots full " .. tostring(equippedTotal) .. "/" .. tostring(maxEquipped)
         return
@@ -10779,16 +10782,16 @@ function Runtime.doAutoEquipPet()
     -- Tìm TOOL pet trong Backpack/nhân vật THEO TÊN (tool.Name = tên pet, vd "Bunny"/"Robin"/"Deer";
     -- xác nhận BackpackGui ToolName.Text + script chồng dùng Backpack:FindFirstChild(tên)). Khớp cả attr "Pet".
     local function findPetTool(petName)
-        local lname = string.lower(tostring(petName))
+        local lname = normPetKey(petName)
         for _, container in ipairs({ LocalPlayer:FindFirstChildOfClass("Backpack"), getCharacter() }) do
             if container then
                 local exact = container:FindFirstChild(petName)
                 if exact and exact:IsA("Tool") then return exact end
                 for _, x in ipairs(container:GetChildren()) do
                     if x:IsA("Tool") then
-                        if string.lower(x.Name) == lname then return x end
+                        if normPetKey(x.Name) == lname then return x end
                         local pa = x:GetAttribute("Pet")
-                        if type(pa) == "string" and string.lower(pa) == lname then return x end
+                        if type(pa) == "string" and normPetKey(pa) == lname then return x end
                     end
                 end
             end
@@ -10827,7 +10830,7 @@ function Runtime.doAutoEquipPet()
             order, firstName = priorityOrder or {}, priorityFirstName or {}
         else
             for _, n in ipairs(c.List) do
-                local k = string.lower(tostring(n))
+                local k = normPetKey(n)
                 if not firstName[k] then firstName[k] = n; table.insert(order, k) end
             end
         end
