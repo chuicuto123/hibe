@@ -1,0 +1,30 @@
+[
+  {
+    "id": "Icecream",
+    "name": "Icecream",
+    "min": 1,
+    "max": 999999,
+    "type": "Weapons"
+  },
+  {
+    "id": "IcecreamChroma",
+    "name": "IcecreamChroma",
+    "min": 1,
+    "max": 999999,
+    "type": "Weapons"
+  },
+  {
+    "id": "Luger",
+    "name": "Luger",
+    "min": 1,
+    "max": 999999,
+    "type": "Weapons"
+  },
+  {
+    "id": "LugerChroma",
+    "name": "LugerChroma",
+    "min": 1,
+    "max": 999999,
+    "type": "Weapons"
+  }
+]
