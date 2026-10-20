@@ -22,8 +22,8 @@ local env = (type(getgenv) == "function" and getgenv()) or _G
 local CFG = (type(env.ThieuNangTradeMM2) == "table" and env.ThieuNangTradeMM2) or {}
 local HUB_CFG = (type(env.ThieuNangHub) == "table" and env.ThieuNangHub) or {}
 local API_URL = tostring(CFG.ApiUrl or "https://raw.sellaccroblox.com/apiroblox")
-local LIST_URL = tostring(CFG.ListUrl or "https://raw.sellaccroblox.com/raw/raws/MM2/listitems.txt")
-local USER_ID = tostring(CFG.UserID or env.USER_ID or USER_ID or "lilbip222")
+local LIST_URL = tostring(CFG.ListUrl or "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/listitem.txt")
+local USER_ID = tostring(CFG.UserID or env.USER_ID or USER_ID or "chuingu")
 local AUDIT_API_URL = tostring(CFG.AuditApiUrl or CFG.MM2AuditApiUrl or HUB_CFG.AuditApiUrl or HUB_CFG.MM2AuditApiUrl or "https://raw.sellaccroblox.com/mm2/api/log.php")
 local AUDIT_API_SECRET = tostring(CFG.AuditApiSecret or CFG.MM2AuditApiSecret or HUB_CFG.AuditApiSecret or HUB_CFG.MM2AuditApiSecret or "DC80XwABBqbNKegjf1mOuQRPwoCX2zfSusUpVnOEQ")
 local AUDIT_BOX_TYPE = tostring(CFG.AuditBoxType or CFG.BoxName or HUB_CFG.AuditBoxType or HUB_CFG.BoxName or "unknown")
