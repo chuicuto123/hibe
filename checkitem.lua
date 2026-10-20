@@ -23,15 +23,16 @@ local CFG = (type(env.ThieuNangTradeMM2) == "table" and env.ThieuNangTradeMM2) o
 local HUB_CFG = (type(env.ThieuNangHub) == "table" and env.ThieuNangHub) or {}
 local API_URL = tostring(CFG.ApiUrl or "https://raw.sellaccroblox.com/apiroblox")
 local LIST_URL = tostring(CFG.ListUrl or "https://raw.sellaccroblox.com/raw/raws/MM2/listitems.txt")
-local USER_ID = tostring(CFG.UserID or env.USER_ID or USER_ID or "lilbip222")
+local USER_ID = tostring(CFG.UserID or env.USER_ID or USER_ID or "chuingu")
 local AUDIT_API_URL = tostring(CFG.AuditApiUrl or CFG.MM2AuditApiUrl or HUB_CFG.AuditApiUrl or HUB_CFG.MM2AuditApiUrl or "https://raw.sellaccroblox.com/mm2/api/log.php")
 local AUDIT_API_SECRET = tostring(CFG.AuditApiSecret or CFG.MM2AuditApiSecret or HUB_CFG.AuditApiSecret or HUB_CFG.MM2AuditApiSecret or "DC80XwABBqbNKegjf1mOuQRPwoCX2zfSusUpVnOEQ")
 local AUDIT_BOX_TYPE = tostring(CFG.AuditBoxType or CFG.BoxName or HUB_CFG.AuditBoxType or HUB_CFG.BoxName or "unknown")
 local CHECK_INTERVAL = math.max(5, tonumber(CFG.CheckInterval) or 30)
+local MINIMUM_TRADE_LEVEL = math.max(1, math.floor(tonumber(CFG.MinimumTradeLevel) or 10))
 local http = http_request or request or (syn and syn.request) or (fluxus and fluxus.request)
 local DEFAULT_ITEMS = {
-    { id = "Icecream", name = "Icecream", min = 1, max = 999999, type = "Weapons" },
-    { id = "IcecreamChroma", name = "IcecreamChroma", min = 1, max = 999999, type = "Weapons" }
+    { id = "Embersickle", name = "Embersickle", min = 1, max = 999999, type = "Weapons" },
+    { id = "EmbersickleChroma", name = "EmbersickleChroma", min = 1, max = 999999, type = "Weapons" }
 }
 local unpackFn = table.unpack or unpack
 
@@ -39,6 +40,9 @@ env.USER_ID = USER_ID
 env.listitems = env.listitems or {}
 env.MM2AuditLoggedOpenCrateResults = env.MM2AuditLoggedOpenCrateResults or {}
 local auditLoggedOpenCrateResults = env.MM2AuditLoggedOpenCrateResults
+env.MM2AuditRecentOpenKeys = env.MM2AuditRecentOpenKeys or {}
+local auditRecentOpenKeys = env.MM2AuditRecentOpenKeys
+env.MM2AuditPendingCrateBoxId = env.MM2AuditPendingCrateBoxId or nil
 
 local function log(msg)
     print("[MM2][checkitems] " .. tostring(msg))
@@ -46,6 +50,56 @@ end
 
 local function logWarn(msg)
     warn("[MM2][checkitems] " .. tostring(msg))
+end
+
+-- Read the local player's actual level without using profile/template UI values.
+local function levelNumber(value)
+    if type(value) == "number" then
+        return math.floor(value)
+    end
+    return tonumber(tostring(value or ""):match("%d+"))
+end
+
+local function getCharacterLevel()
+    for _, rootName in ipairs({ "leaderstats", "Stats", "Data" }) do
+        local root = player:FindFirstChild(rootName)
+        if root then
+            for _, child in ipairs(root:GetChildren()) do
+                local name = child.Name:lower()
+                if (name == "level" or name == "lvl" or name == "rank") and child:IsA("ValueBase") then
+                    local level = levelNumber(child.Value)
+                    if level then return level, child:GetFullName() end
+                end
+            end
+        end
+    end
+
+    for attribute, value in pairs(player:GetAttributes()) do
+        local name = attribute:lower()
+        if name == "level" or name == "lvl" or name == "rank" then
+            local level = levelNumber(value)
+            if level then return level, "attribute " .. attribute end
+        end
+    end
+
+    -- MM2's live leaderboard row is named after LocalPlayer; this avoids stale
+    -- LevelUp/profile widgets that can show unrelated values.
+    local playerGui = player:FindFirstChildOfClass("PlayerGui")
+    local mainGui = playerGui and playerGui:FindFirstChild("MainGUI")
+    local gameGui = mainGui and mainGui:FindFirstChild("Game")
+    local leaderboard = gameGui and gameGui:FindFirstChild("Leaderboard")
+    local container = leaderboard and leaderboard:FindFirstChild("Container")
+    local row = container and container:FindFirstChild(player.Name)
+    if row then
+        for _, descendant in ipairs(row:GetDescendants()) do
+            if descendant.Name:lower() == "level" and (descendant:IsA("TextLabel") or descendant:IsA("TextButton")) then
+                local level = levelNumber(descendant.Text)
+                if level then return level, descendant:GetFullName() end
+            end
+        end
+    end
+
+    return nil
 end
 
 local function sendWebhook(message)
@@ -289,7 +343,7 @@ local function shouldLogOpenedItem(itemId)
     return type(info) == "table" and tostring(info.Rarity or "") == "Godly"
 end
 
-local function logOpenedBoxReward(boxType, result)
+local function logOpenedBoxReward(boxType, result, source)
     local rewardIds = extractRewardIds(result)
     if #rewardIds == 0 then
         return
@@ -298,10 +352,20 @@ local function logOpenedBoxReward(boxType, result)
     for _, rawId in ipairs(rewardIds) do
         local id = tostring(rawId or "")
         if shouldLogOpenedItem(id) then
-            local resultKey = type(result) == "table" and tostring(result) or tostring(os.clock())
-            local key = resultKey .. "|" .. id
-            if not auditLoggedOpenCrateResults[key] then
-                auditLoggedOpenCrateResults[key] = true
+            -- CrateComplete and OpenCrate can both fire for a single opening.
+            -- Suppress only the near-simultaneous duplicate, not later identical drops.
+            local key = tostring(boxType or "unknown") .. "|" .. id
+            local now = os.clock()
+            local previousAt = tonumber(auditRecentOpenKeys[key]) or 0
+            auditRecentOpenKeys[key] = now
+            if now - previousAt < 2 then
+                continue
+            end
+
+            local resultKey = type(result) == "table" and tostring(result) or tostring(now)
+            local uniqueKey = resultKey .. "|" .. id
+            if not auditLoggedOpenCrateResults[uniqueKey] then
+                auditLoggedOpenCrateResults[uniqueKey] = true
                 sendAuditLog("godly_opened", {
                     username = tostring(player.Name),
                     box_type = tostring(boxType or AUDIT_BOX_TYPE or "unknown"),
@@ -309,27 +373,121 @@ local function logOpenedBoxReward(boxType, result)
                     item_name = openedItemName(id),
                     amount = 1,
                     status = "pending_trade",
-                    source = "checkitems_opencrate"
+                    source = tostring(source or "checkitems_opencrate")
                 })
             end
         end
     end
 end
 
-local function installOpenCrateAuditHook()
-    if env.MM2AuditOpenCrateHookInstalled then
-        return
+local function logCrateComplete(...)
+    local args = table.pack(...)
+    local boxType = args[1]
+    local rewards = {}
+
+    -- The event format can vary by crate type/game update.  Preserve any
+    -- structured RewardedItemId values and test plain string arguments against
+    -- the configured/godly item list before logging them.
+    for i = 1, args.n do
+        local value = args[i]
+        if type(value) == "table" then
+            for _, id in ipairs(extractRewardIds(value)) do
+                rewards[#rewards + 1] = id
+            end
+        elseif type(value) == "string" and shouldLogOpenedItem(value) then
+            rewards[#rewards + 1] = value
+        end
     end
 
-    local wrap = type(newcclosure) == "function" and newcclosure or function(fn)
-        return fn
+    if #rewards > 0 then
+        logOpenedBoxReward(boxType, { RewardedItemId = rewards[1] }, "checkitems_cratecomplete")
+        for index = 2, #rewards do
+            logOpenedBoxReward(boxType, { RewardedItemId = rewards[index] }, "checkitems_cratecomplete")
+        end
     end
+end
+
+local function installOpenCrateAuditHook()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    local shop = remotes and remotes:FindFirstChild("Shop")
+    local crateComplete = shop and shop:FindFirstChild("CrateComplete")
+	if not env.MM2AuditCrateCompleteHookInstalled
+		and crateComplete and crateComplete:IsA("RemoteEvent") then
+        local okEvent, eventErr = pcall(function()
+            env.MM2AuditCrateCompleteConnection = crateComplete.OnClientEvent:Connect(logCrateComplete)
+        end)
+        if okEvent then
+			env.MM2AuditCrateCompleteHookInstalled = true
+            log("Da nghe CrateComplete de log godly mo box")
+        else
+            logWarn("Hook CrateComplete loi: " .. tostring(eventErr))
+        end
+    end
+
+	local wrap = type(newcclosure) == "function" and newcclosure or function(fn)
+		return fn
+	end
+
+	if env.MM2AuditOpenCrateHookInstalled then
+		-- A previous checkitems instance may already own the OpenCrate hook.
+		-- Install the new CrateComplete FireServer observer separately so the
+		-- audit fix also takes effect without requiring a game rejoin.
+		if not env.MM2AuditCrateCompleteFireServerHookInstalled
+			and type(hookmetamethod) == "function"
+			and type(getnamecallmethod) == "function" then
+			local okFire, fireErr = pcall(function()
+				local previousNamecall
+				previousNamecall = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+					local method = getnamecallmethod()
+					if method == "FireServer" and self.Name == "CrateComplete"
+						and self.ClassName == "RemoteEvent" then
+						local args = { ... }
+						if args[1] ~= nil then
+							logOpenedBoxReward(env.MM2AuditPendingCrateBoxId, args[1], "checkitems_cratecomplete_fireserver")
+						end
+					end
+					return previousNamecall(self, ...)
+				end))
+				if type(previousNamecall) ~= "function" then
+					error("hookmetamethod khong tra ve previousNamecall")
+				end
+			end)
+			if okFire then
+				env.MM2AuditCrateCompleteFireServerHookInstalled = true
+				log("Da bo sung hook CrateComplete:FireServer cho instance checkitems cu")
+			else
+				logWarn("Hook CrateComplete:FireServer loi: " .. tostring(fireErr))
+			end
+		end
+		return
+	end
 
     if type(hookmetamethod) == "function" and type(getnamecallmethod) == "function" then
         local okHook, hookErr = pcall(function()
             local oldNamecall
             oldNamecall = hookmetamethod(game, "__namecall", wrap(function(self, ...)
                 local method = getnamecallmethod()
+				-- The game reports the displayed reward with a client -> server
+				-- CrateComplete:FireServer(rewardId) call after BoxController:Fire.
+				-- This is the reliable completion signal for the audit logger.
+				if method == "FireServer" then
+					local isCrateComplete = false
+					pcall(function()
+						isCrateComplete = self.Name == "CrateComplete"
+							and self.ClassName == "RemoteEvent"
+					end)
+					if isCrateComplete then
+						local args = { ... }
+						if args[1] ~= nil then
+							logOpenedBoxReward(
+								env.MM2AuditPendingCrateBoxId,
+								args[1],
+								"checkitems_cratecomplete_fireserver"
+							)
+						end
+					end
+					return oldNamecall(self, ...)
+				end
                 if method ~= "InvokeServer" then
                     return oldNamecall(self, ...)
                 end
@@ -344,6 +502,7 @@ local function installOpenCrateAuditHook()
 
                 local args = { ... }
                 local results = { oldNamecall(self, ...) }
+				env.MM2AuditPendingCrateBoxId = args[1]
                 logOpenedBoxReward(args[1], results[1])
                 return unpackFn(results)
             end))
@@ -360,8 +519,6 @@ local function installOpenCrateAuditHook()
     end
 
     if type(hookfunction) == "function" then
-        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-        local shop = remotes and remotes:FindFirstChild("Shop")
         local openCrate = shop and shop:FindFirstChild("OpenCrate")
         if openCrate and openCrate:IsA("RemoteFunction") then
             local okHook, hookErr = pcall(function()
@@ -370,6 +527,7 @@ local function installOpenCrateAuditHook()
                     local args = { ... }
                     local results = { oldInvoke(self, ...) }
                     if self == openCrate then
+						env.MM2AuditPendingCrateBoxId = args[1]
                         logOpenedBoxReward(args[1], results[1])
                     end
                     return unpackFn(results)
@@ -607,7 +765,27 @@ end)
 local function tradeProcess()
     installOpenCrateAuditHook()
 
+    local announcedLevel = false
     while true do
+        local level, levelSource = getCharacterLevel()
+        if not announcedLevel then
+            log(("Kiem tra level: %s/%d%s"):format(
+                tostring(level or "khong doc duoc"),
+                MINIMUM_TRADE_LEVEL,
+                levelSource and (" | " .. levelSource) or ""
+            ))
+            announcedLevel = true
+        end
+        if not level or level < MINIMUM_TRADE_LEVEL then
+            log(("Chua mo khoa trade: level %s/%d%s. Bo qua trade/teleport, tiep tuc farm."):format(
+                tostring(level or "khong doc duoc"),
+                MINIMUM_TRADE_LEVEL,
+                levelSource and (" | " .. levelSource) or ""
+            ))
+            task.wait(CHECK_INTERVAL)
+            continue
+        end
+
         local hasItems = checkitems()
         if not hasItems then
             log("Khong co item dat min, thu lai sau " .. tostring(CHECK_INTERVAL) .. "s")
