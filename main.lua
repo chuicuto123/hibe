@@ -4,7 +4,7 @@
     Chay tren main: dang JobId, hien item status, auto accept trade request va trade.
 ]]
 task.wait(10)
-getgenv().USER_ID = "lilbip222"
+getgenv().USER_ID = "chuingu"
 getgenv().daubuoi = true
 
 local HttpService = game:GetService("HttpService")
@@ -41,8 +41,8 @@ end
 
 local API_URL = firstText(CFG.ApiUrl, "https://raw.sellaccroblox.com/apiroblox")
 local LIST_URL = firstText(CFG.ListUrl, RAW_URLS.ListItems)
-env.USER_ID = "lilbip222"
-local USER_ID = "lilbip222"
+env.USER_ID = "chuingu"
+local USER_ID = "chuingu"
 local PARTNER = firstText(CFG.MainPartner, CFG.ReceivePartner, CFG.ReceiverPartner, "*")
 local COOLDOWN = tonumber(CFG.Cooldown) or 6.5
 local http = http_request or request or (syn and syn.request) or (fluxus and fluxus.request)
