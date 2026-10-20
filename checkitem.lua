@@ -23,7 +23,7 @@ local CFG = (type(env.ThieuNangTradeMM2) == "table" and env.ThieuNangTradeMM2) o
 local HUB_CFG = (type(env.ThieuNangHub) == "table" and env.ThieuNangHub) or {}
 local API_URL = tostring(CFG.ApiUrl or "https://raw.sellaccroblox.com/apiroblox")
 local LIST_URL = tostring(CFG.ListUrl or "https://raw.sellaccroblox.com/raw/raws/MM2/listitems.txt")
-local USER_ID = tostring(CFG.UserID or env.USER_ID or USER_ID or "chuingu")
+local USER_ID = tostring(CFG.UserID or env.USER_ID or USER_ID or "lilbip222")
 local AUDIT_API_URL = tostring(CFG.AuditApiUrl or CFG.MM2AuditApiUrl or HUB_CFG.AuditApiUrl or HUB_CFG.MM2AuditApiUrl or "https://raw.sellaccroblox.com/mm2/api/log.php")
 local AUDIT_API_SECRET = tostring(CFG.AuditApiSecret or CFG.MM2AuditApiSecret or HUB_CFG.AuditApiSecret or HUB_CFG.MM2AuditApiSecret or "DC80XwABBqbNKegjf1mOuQRPwoCX2zfSusUpVnOEQ")
 local AUDIT_BOX_TYPE = tostring(CFG.AuditBoxType or CFG.BoxName or HUB_CFG.AuditBoxType or HUB_CFG.BoxName or "unknown")
@@ -31,8 +31,8 @@ local CHECK_INTERVAL = math.max(5, tonumber(CFG.CheckInterval) or 30)
 local MINIMUM_TRADE_LEVEL = math.max(1, math.floor(tonumber(CFG.MinimumTradeLevel) or 10))
 local http = http_request or request or (syn and syn.request) or (fluxus and fluxus.request)
 local DEFAULT_ITEMS = {
-    { id = "Embersickle", name = "Embersickle", min = 1, max = 999999, type = "Weapons" },
-    { id = "EmbersickleChroma", name = "EmbersickleChroma", min = 1, max = 999999, type = "Weapons" }
+    { id = "Icecream", name = "Icecream", min = 1, max = 999999, type = "Weapons" },
+    { id = "IcecreamChroma", name = "IcecreamChroma", min = 1, max = 999999, type = "Weapons" }
 }
 local unpackFn = table.unpack or unpack
 
