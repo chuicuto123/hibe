@@ -16,19 +16,19 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
 local env = (type(getgenv) == "function" and getgenv()) or _G
-env.USER_ID = "lilbip222"
+env.USER_ID = "chuingu"
 if type(getgenv) == "function" then
-    getgenv().USER_ID = "lilbip222"
+    getgenv().USER_ID = "chuingu"
 end
 env.listitems = env.listitems or {}
 
 local API_URL = "https://raw.sellaccroblox.com/apiroblox"
 local RAW_URLS = {
-    Config = "https://raw.sellaccroblox.com/raw/raws/MM2/config222.txt",
-    AltTrade = "https://raw.sellaccroblox.com/raw/raws/MM2/alttrade222.txt",
-    CheckItems = "https://raw.sellaccroblox.com/raw/raws/MM2/checkitems222.txt",
-    Farm = "https://raw.sellaccroblox.com/raw/raws/MM2/Farm222.txt",
-    ListItems = "https://raw.sellaccroblox.com/raw/raws/MM2/listitems.txt"
+    Config = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/config.lua",
+    AltTrade = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/alttrade.lua",
+    CheckItems = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/checkitem.lua",
+    Farm = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/farm.lua",
+    ListItems = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/listitem.txt"
 }
 
 local CFG = (type(env.ThieuNangTradeMM2) == "table" and env.ThieuNangTradeMM2) or {}
@@ -43,7 +43,7 @@ CFG.ScriptUrls.AltTrade = CFG.ScriptUrls.AltTrade or RAW_URLS.AltTrade
 CFG.ScriptUrls.CheckItems = CFG.ScriptUrls.CheckItems or RAW_URLS.CheckItems
 CFG.ScriptUrls.Farm = CFG.ScriptUrls.Farm or RAW_URLS.Farm
 
-local USER_ID = "lilbip222"
+local USER_ID = "chuingu"
 local http = http_request or request or (syn and syn.request) or (fluxus and fluxus.request)
 local DEFAULT_ITEMS = {
     { id = "Icecream", name = "Icecream", min = 1, max = 999999, type = "Weapons" },
