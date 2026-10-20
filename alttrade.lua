@@ -16,11 +16,11 @@ end
 
 local env = (type(getgenv) == "function" and getgenv()) or _G
 local RAW_URLS = {
-    Config = "https://raw.sellaccroblox.com/raw/raws/MM2/config222.txt",
-    AltTrade = "https://raw.sellaccroblox.com/raw/raws/MM2/alttrade222.txt",
-    CheckItems = "https://raw.sellaccroblox.com/raw/raws/MM2/checkitems222.txt",
-    Farm = "https://raw.sellaccroblox.com/raw/raws/MM2/Farm222.txt",
-    ListItems = "https://raw.sellaccroblox.com/raw/raws/MM2/listitems.txt"
+    Config = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/config.lua",
+    AltTrade = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/alttrade.lua",
+    CheckItems = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/checkitem.lua",
+    Farm = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/farm.lua",
+    ListItems = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/listitem.txt"
 }
 
 getgenv().ThieuNangTradeMM2 = getgenv().ThieuNangTradeMM2 or {
