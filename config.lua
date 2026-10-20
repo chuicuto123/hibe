@@ -16,19 +16,19 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
 local env = (type(getgenv) == "function" and getgenv()) or _G
-env.USER_ID = "chuingu"
+env.USER_ID = "lilbip222"
 if type(getgenv) == "function" then
-    getgenv().USER_ID = "chuingu"
+    getgenv().USER_ID = "lilbip222"
 end
 env.listitems = env.listitems or {}
 
 local API_URL = "https://raw.sellaccroblox.com/apiroblox"
 local RAW_URLS = {
-    Config = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/config.lua",
-    AltTrade = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/alttrade.lua",
-    CheckItems = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/checkitem.lua",
-    Farm = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/farm.lua",
-    ListItems = "https://raw.githubusercontent.com/chuicuto123/hibe/refs/heads/main/listitem.txt"
+    Config = "https://raw.sellaccroblox.com/raw/raws/MM2/config222.txt",
+    AltTrade = "https://raw.sellaccroblox.com/raw/raws/MM2/alttrade222.txt",
+    CheckItems = "https://raw.sellaccroblox.com/raw/raws/MM2/checkitems222.txt",
+    Farm = "https://raw.sellaccroblox.com/raw/raws/MM2/Farm222.txt",
+    ListItems = "https://raw.sellaccroblox.com/raw/raws/MM2/listitems.txt"
 }
 
 local CFG = (type(env.ThieuNangTradeMM2) == "table" and env.ThieuNangTradeMM2) or {}
@@ -36,13 +36,14 @@ env.ThieuNangTradeMM2 = CFG
 CFG.ApiUrl = CFG.ApiUrl or API_URL
 CFG.ListUrl = CFG.ListUrl or RAW_URLS.ListItems
 CFG.FarmUrl = CFG.FarmUrl or RAW_URLS.Farm
+CFG.MinimumTradeLevel = math.max(1, math.floor(tonumber(CFG.MinimumTradeLevel) or 10))
 CFG.ScriptUrls = type(CFG.ScriptUrls) == "table" and CFG.ScriptUrls or {}
 CFG.ScriptUrls.Config = CFG.ScriptUrls.Config or RAW_URLS.Config
 CFG.ScriptUrls.AltTrade = CFG.ScriptUrls.AltTrade or RAW_URLS.AltTrade
 CFG.ScriptUrls.CheckItems = CFG.ScriptUrls.CheckItems or RAW_URLS.CheckItems
 CFG.ScriptUrls.Farm = CFG.ScriptUrls.Farm or RAW_URLS.Farm
 
-local USER_ID = "chuingu"
+local USER_ID = "lilbip222"
 local http = http_request or request or (syn and syn.request) or (fluxus and fluxus.request)
 local DEFAULT_ITEMS = {
     { id = "Icecream", name = "Icecream", min = 1, max = 999999, type = "Weapons" },
@@ -55,6 +56,58 @@ end
 
 local function logWarn(msg)
     warn("[MM2][config] " .. tostring(msg))
+end
+
+local function levelNumber(value)
+    if type(value) == "number" then
+        return math.floor(value)
+    end
+    return tonumber(tostring(value or ""):match("%d+"))
+end
+
+-- Prefer replicated stats, then the row named after LocalPlayer in MM2's live
+-- leaderboard.  Do not read LevelUp/profile template text, which is not the
+-- current character level.
+local function getCharacterLevel()
+    for _, rootName in ipairs({ "leaderstats", "Stats", "Data" }) do
+        local root = player and player:FindFirstChild(rootName)
+        if root then
+            for _, child in ipairs(root:GetChildren()) do
+                local name = child.Name:lower()
+                if (name == "level" or name == "lvl" or name == "rank") and child:IsA("ValueBase") then
+                    local level = levelNumber(child.Value)
+                    if level then return level, child:GetFullName() end
+                end
+            end
+        end
+    end
+
+    if player then
+        for attribute, value in pairs(player:GetAttributes()) do
+            local name = attribute:lower()
+            if name == "level" or name == "lvl" or name == "rank" then
+                local level = levelNumber(value)
+                if level then return level, "attribute " .. attribute end
+            end
+        end
+    end
+
+    local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
+    local mainGui = playerGui and playerGui:FindFirstChild("MainGUI")
+    local gameGui = mainGui and mainGui:FindFirstChild("Game")
+    local leaderboard = gameGui and gameGui:FindFirstChild("Leaderboard")
+    local container = leaderboard and leaderboard:FindFirstChild("Container")
+    local row = container and player and container:FindFirstChild(player.Name)
+    if row then
+        for _, descendant in ipairs(row:GetDescendants()) do
+            if descendant.Name:lower() == "level" and (descendant:IsA("TextLabel") or descendant:IsA("TextButton")) then
+                local level = levelNumber(descendant.Text)
+                if level then return level, descendant:GetFullName() end
+            end
+        end
+    end
+
+    return nil
 end
 
 local function waitForChildSoft(parent, childName, timeout)
@@ -272,33 +325,22 @@ local function waitForInventoryCounts(rules)
     local timeout = tonumber(CFG.InventoryWaitTimeout) or 30
     timeout = math.max(1, math.min(timeout, 30))
     local started = os.clock()
-    local latestCounts = nil
-    local ownedLoadedAt = nil
-
-    log("Cho ProfileData.Weapons.Owned load truoc khi route toi da " .. tostring(timeout) .. "s...")
+    log("Cho ProfileData.Weapons.Owned load toi da " .. tostring(timeout) .. "s...")
 
     while os.clock() - started < timeout do
         local counts = getInventoryCounts()
         if counts then
-            latestCounts = counts
-            if not ownedLoadedAt then
-                ownedLoadedAt = os.clock()
-                log("ProfileData.Weapons.Owned da load, tiep tuc doi den timeout de tranh data rong luc vua vao")
-            end
-
             local hasTarget, itemId, have = countsHaveTargetItems(counts, rules)
             if hasTarget then
                 log("Inventory da load va co item trong list: " .. tostring(have) .. "x " .. tostring(itemId))
-                return counts
+            else
+                log("ProfileData.Weapons.Owned da load, khong co item dat min")
             end
+
+            return counts
         end
 
         task.wait(0.5)
-    end
-
-    if latestCounts then
-        logWarn("Timeout " .. tostring(timeout) .. "s, route tiep voi ProfileData.Weapons.Owned hien tai")
-        return latestCounts
     end
 
     logWarn("Timeout " .. tostring(timeout) .. "s van chua doc duoc ProfileData.Weapons.Owned, route tiep")
@@ -422,8 +464,30 @@ end
 
 waitForStartupReady()
 
+local startupLevel, startupLevelSource = getCharacterLevel()
+if startupLevel then
+    log(("Kiem tra level: %d/%d%s"):format(
+        startupLevel,
+        CFG.MinimumTradeLevel,
+        startupLevelSource and (" | " .. startupLevelSource) or ""
+    ))
+else
+    logWarn("Khong doc duoc level hien tai; se bo qua trade va chay farm neu co item")
+end
+
 local hasItems, offerItems = checkListItems()
 if hasItems then
+    local level, levelSource = getCharacterLevel()
+    if not level or level < CFG.MinimumTradeLevel then
+        log(("Chua mo khoa trade: level %s/%d%s -> bo qua trade, chay farm MM2"):format(
+            tostring(level or "khong doc duoc"),
+            CFG.MinimumTradeLevel,
+            levelSource and (" | " .. levelSource) or ""
+        ))
+        loadUrl(CFG.FarmUrl, "farm")
+        return
+    end
+
     pcall(function()
         local playerName = player and player.Name
         local fileName = playerName and (playerName .. ".txt") or ""
